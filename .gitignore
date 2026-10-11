@@ -1,0 +1,10 @@
+.dart_tool/
+.flutter-plugins*
+build/
+generated/
+*.apk
+*.ipa
+*.jks
+*.keystore
+key.properties
+__pycache__/
