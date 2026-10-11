@@ -1,0 +1,88 @@
+name: Test and build install files
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Generate native shells
+        run: |
+          flutter create --project-name ciphercalc --org io.github.mohammmad357 --platforms android,ios generated
+          rm -rf generated/lib generated/test
+          cp -R lib test generated/
+          cp pubspec.yaml generated/pubspec.yaml
+          rm generated/analysis_options.yaml
+          python3 tools/configure.py
+      - name: Dependencies and source checks
+        working-directory: generated
+        run: |
+          flutter pub get
+          dart format lib test
+          flutter analyze --no-fatal-infos
+          flutter test --reporter expanded
+      - name: Android APK (preview signing)
+        if: runner.os == 'Linux'
+        working-directory: generated
+        run: flutter build apk --release
+      - name: Package Android evidence
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp generated/build/app/outputs/flutter-apk/app-release.apk dist/CipherCalc-android-preview.apk
+          cp generated/pubspec.lock dist/android-pubspec.lock
+          flutter --version > dist/android-toolchain.txt
+          cd dist && sha256sum *.apk > android-SHA256SUMS.txt
+      - name: iOS unsigned app
+        if: runner.os == 'macOS'
+        working-directory: generated
+        run: flutter build ios --release --no-codesign
+      - name: Package unsigned iOS evidence
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist/Payload
+          cp -R generated/build/ios/iphoneos/Runner.app dist/Payload/
+          cd dist && zip -qr CipherCalc-ios-UNSIGNED.ipa Payload && rm -rf Payload
+          cp ../generated/pubspec.lock ios-pubspec.lock
+          flutter --version > ios-toolchain.txt
+          shasum -a 256 *.ipa > ios-SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ciphercalc-${{ runner.os }}
+          path: dist/*
+          retention-days: 30
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish preview files after both builds pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="preview-${GITHUB_SHA:0:7}"
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "CipherCalc preview — ${GITHUB_SHA:0:7}" --notes-file RELEASE_NOTES.md dist/*
