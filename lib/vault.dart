@@ -16,7 +16,7 @@ List<int> randomBytes(int size) {
 Future<List<int>> derive(String password, List<int> salt) => Isolate.run(() async {
   final kdf = Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: kdfIterations, bits: 256);
   final key = await kdf.deriveKey(secretKey: SecretKey(utf8.encode(password)), nonce: salt);
-  return key.extractBytes();
+  return List<int>.from(await key.extractBytes());
 });
 
 class VaultFile {
